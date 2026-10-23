@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Sentinel - {{ server.name }}</title>
+</head>
+<body>
+    <h1>{{ server.name }}</h1>
+    <p><a href="{% url 'dashboard' %}">&larr; Back to dashboard</a></p>
+
+    <h2>Blocked IPs</h2>
+    <ul>
+        {% for ip in blocked %}
+        <li>{{ ip.ip_address }} - {{ ip.reason }} ({{ ip.blocked_at }})</li>
+        {% empty %}
+        <li>No IPs blocked yet.</li>
+        {% endfor %}
+    </ul>
+
+    <h2>Recent log entries</h2>
+    <table border="1">
+        <tr>
+            <th>Timestamp</th>
+            <th>IP</th>
+            <th>Username</th>
+            <th>Success</th>
+        </tr>
+        {% for entry in entries %}
+        <tr>
+            <td>{{ entry.timestamp }}</td>
+            <td>{{ entry.ip_address }}</td>
+            <td>{{ entry.username }}</td>
+            <td>{{ entry.success }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+</body>
+</html>

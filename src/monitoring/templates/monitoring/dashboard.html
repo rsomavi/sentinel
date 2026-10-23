@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Sentinel - Dashboard</title>
+</head>
+<body>
+    <h1>Sentinel Dashboard</h1>
+    <p>Logged in as {{ user.username }} | <a href="{% url 'logout' %}">Logout</a></p>
+
+    <h2>Your monitored servers</h2>
+    <ul>
+        {% for server in servers %}
+        <li>
+            <a href="{% url 'server_detail' server.id %}">{{ server.name }}</a>
+            ({{ server.hostname }})
+        </li>
+        {% empty %}
+        <li>No servers yet.</li>
+        {% endfor %}
+    </ul>
+</body>
+</html>
