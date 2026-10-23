@@ -1,3 +1,80 @@
+import tempfile
+import os
 from django.test import TestCase
+from django.contrib.auth.models import User
+from django.core.management import call_command
+from .models import MonitoredServer, LogEntry
 
-# Create your tests here.
+
+class ParseAuthLogTest(TestCase):
+
+    def setUp(self):
+        self.user = User.objects.create_user(username='testuser', password='testpass')
+        self.server = MonitoredServer.objects.create(
+            owner=self.user,
+            name='Test Server',
+            hostname='localhost',
+        )
+
+    def write_temp_log(self, content):
+        tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.log', delete=False)
+        tmp.write(content)
+        tmp.close()
+        return tmp.name
+
+    def test_parses_failed_login_with_invalid_user(self):
+        log_content = (
+            'Oct 22 09:15:01 MSI sshd[1001]: Failed password for invalid user '
+            'admin from 185.220.101.5 port 54321 ssh2\n'
+        )
+        log_file = self.write_temp_log(log_content)
+
+        call_command('parse_auth_log', log_file, self.server.name)
+        os.unlink(log_file)
+
+        self.assertEqual(LogEntry.objects.count(), 1)
+        entry = LogEntry.objects.first()
+        self.assertEqual(entry.ip_address, '185.220.101.5')
+        self.assertEqual(entry.username, 'admin')
+        self.assertFalse(entry.success)
+
+    def test_parses_accepted_login(self):
+        log_content = (
+            'Oct 22 09:20:00 MSI sshd[1009]: Accepted password for ruben '
+            'from 192.168.1.10 port 54400 ssh2\n'
+        )
+        log_file = self.write_temp_log(log_content)
+
+        call_command('parse_auth_log', log_file, self.server.name)
+        os.unlink(log_file)
+
+        entry = LogEntry.objects.first()
+        self.assertEqual(entry.username, 'ruben')
+        self.assertEqual(entry.ip_address, '192.168.1.10')
+        self.assertTrue(entry.success)
+
+    def test_skips_unparseable_lines(self):
+        log_content = 'this is not a valid log line\n'
+        log_file = self.write_temp_log(log_content)
+
+        call_command('parse_auth_log', log_file, self.server.name)
+        os.unlink(log_file)
+
+        self.assertEqual(LogEntry.objects.count(), 0)
+
+    def test_multiple_entries_from_same_ip(self):
+        log_content = (
+            'Oct 22 09:15:01 MSI sshd[1001]: Failed password for invalid user '
+            'admin from 185.220.101.5 port 54321 ssh2\n'
+            'Oct 22 09:15:03 MSI sshd[1002]: Failed password for invalid user '
+            'root from 185.220.101.5 port 54322 ssh2\n'
+        )
+        log_file = self.write_temp_log(log_content)
+
+        call_command('parse_auth_log', log_file, self.server.name)
+        os.unlink(log_file)
+
+        self.assertEqual(LogEntry.objects.count(), 2)
+        self.assertEqual(
+            LogEntry.objects.filter(ip_address='185.220.101.5').count(), 2
+        )
