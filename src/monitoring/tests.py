@@ -8,6 +8,8 @@ from .models import MonitoredServer, LogEntry
 from datetime import timedelta
 from django.utils import timezone
 from .models import BlockedIP
+from monitoring.management.commands.monitor_server import Command as MonitorCommand
+
 
 
 class ParseAuthLogTest(TestCase):
@@ -140,4 +142,38 @@ class DetectBruteForceTest(TestCase):
 
         self.assertEqual(
             BlockedIP.objects.filter(server=self.server, ip_address='185.220.101.5').count(), 1
+        )
+
+
+class MonitorServerLogicTest(TestCase):
+
+    def setUp(self):
+        self.user = User.objects.create_user(username='testuser', password='testpass')
+        self.server = MonitoredServer.objects.create(
+            owner=self.user,
+            name='Test Server',
+            hostname='localhost',
+        )
+        self.cmd = MonitorCommand()
+
+    def test_parses_single_line_and_saves_entry(self):
+        line = 'Oct 26 16:43:00 MSI sshd[1234]: Failed password for ruben from 127.0.0.1 port 50000 ssh2\n'
+        self.cmd.process_line(line, self.server)
+        self.assertEqual(LogEntry.objects.count(), 1)
+
+    def test_expands_repeated_message_line(self):
+        line = (
+            'Oct 26 16:43:00 MSI sshd[1234]: message repeated 3 times: '
+            '[ Failed password for ruben from 127.0.0.1 port 50000 ssh2]\n'
+        )
+        self.cmd.process_line(line, self.server)
+        self.assertEqual(LogEntry.objects.count(), 3)
+
+    def test_blocks_ip_after_threshold_reached_in_realtime(self):
+        line_template = 'Oct 26 16:43:{:02d} MSI sshd[1234]: Failed password for ruben from 9.9.9.9 port 50000 ssh2\n'
+        for i in range(5):
+            self.cmd.process_line(line_template.format(i), self.server)
+
+        self.assertTrue(
+            BlockedIP.objects.filter(server=self.server, ip_address='9.9.9.9').exists()
         )
