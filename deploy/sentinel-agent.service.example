@@ -4,6 +4,7 @@ After=network.target
 
 [Service]
 Type=simple
+Environment=PYTHONUNBUFFERED=1
 WorkingDirectory=/path/to/sentinel/src
 ExecStart=/path/to/sentinel/venv/bin/python3 manage.py monitor_server /var/log/auth.log "Your Server Name"
 Restart=on-failure
