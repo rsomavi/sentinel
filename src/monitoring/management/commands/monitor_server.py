@@ -1,9 +1,11 @@
 import re
 import time
+import subprocess
 from datetime import datetime, timedelta
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 from monitoring.models import MonitoredServer, LogEntry, BlockedIP
+
 
 
 LOG_PATTERN = re.compile(
@@ -20,6 +22,7 @@ REPEATED_PATTERN = re.compile(
 
 FAILED_ATTEMPTS_THRESHOLD = 5
 TIME_WINDOW_SECONDS = 60
+LOCALHOST_IPS = {'127.0.0.1', '::1'}
 
 
 class Command(BaseCommand):
@@ -87,6 +90,7 @@ class Command(BaseCommand):
         if not success:
             self.check_brute_force(server, data['ip'])
 
+
     def check_brute_force(self, server, ip):
         already_blocked = BlockedIP.objects.filter(server=server, ip_address=ip).exists()
         if already_blocked:
@@ -107,6 +111,27 @@ class Command(BaseCommand):
                 reason=f'{recent_failures} failed login attempts in the last {TIME_WINDOW_SECONDS}s',
             )
             self.stdout.write(self.style.WARNING(f'BLOCKED {ip} after {recent_failures} failures'))
+
+            if ip not in LOCALHOST_IPS:
+                self.block_with_firewall(ip)
+            else:
+                self.stdout.write(self.style.NOTICE(f'Skipping firewall rule for {ip} (localhost)'))
+
+
+    def block_with_firewall(self, ip):
+        try:
+            result = subprocess.run(
+                ['sudo', 'ufw', 'deny', 'from', ip],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode == 0:
+                self.stdout.write(self.style.SUCCESS(f'Firewall rule added for {ip}'))
+            else:
+                self.stderr.write(f'ufw failed for {ip}: {result.stderr}')
+        except Exception as e:
+            self.stderr.write(f'Error running ufw for {ip}: {e}')
 
     def parse_timestamp(self, month, day, time_str):
         current_year = timezone.now().year
