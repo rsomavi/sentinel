@@ -16,6 +16,12 @@
         {% endfor %}
     </ul>
 
+    <h2>Search logs</h2>
+    <form method="get">
+        <input type="text" name="q" value="{{ query }}" placeholder="Search by IP or username">
+        <input type="submit" value="Search">
+    </form>
+
     <h2>Recent log entries</h2>
     <table border="1">
         <tr>
