@@ -6,3 +6,4 @@ db.sqlite3
 .env
 !sample_data/*.log
 deploy/sentinel-agent.service
+*:Zone.Identifier
