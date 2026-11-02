@@ -1,6 +1,6 @@
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
-from django.shortcuts import render, redirect
+from django.shortcuts import render, redirect, get_object_or_404
 from django.db import connection, models
 from .models import MonitoredServer, LogEntry, BlockedIP
 
@@ -30,7 +30,16 @@ def dashboard_view(request):
 
 @login_required
 def server_detail_view(request, server_id):
-    server = MonitoredServer.objects.get(id=server_id, owner=request.user)
+    # FLAW 2 (Broken Access Control): looks up the server by id only,
+    # without checking that it belongs to the logged-in user. Any
+    # authenticated user can view any server's logs and blocked IPs
+    # just by changing the server_id in the URL.
+    # server = MonitoredServer.objects.get(id=server_id)
+
+    # FIX: always scope the lookup to the current user's own servers.
+    # If the server doesn't belong to them, Django raises a 404 instead
+    # of leaking another user's data.
+    server = get_object_or_404(MonitoredServer, id=server_id, owner=request.user)
 
     query = request.GET.get('q', '')
 
@@ -38,21 +47,21 @@ def server_detail_view(request, server_id):
         # FLAW 1 (Injection): vulnerable raw SQL query built with string
         # concatenation — the user-supplied "query" is inserted directly
         # into the SQL statement, allowing SQL injection.
-        # with connection.cursor() as cursor:
-        #     sql = "SELECT id, timestamp, ip_address, username, success FROM monitoring_logentry WHERE server_id = " + str(server.id) + " AND (ip_address LIKE '%" + query + "%' OR username LIKE '%" + query + "%') ORDER BY timestamp DESC"
-        #     cursor.execute(sql)
-        #     rows = cursor.fetchall()
-        #     entries = [
-        #         {'id': r[0], 'timestamp': r[1], 'ip_address': r[2], 'username': r[3], 'success': r[4]}
-        #         for r in rows
-        #     ]
+        with connection.cursor() as cursor:
+            sql = "SELECT id, timestamp, ip_address, username, success FROM monitoring_logentry WHERE server_id = " + str(server.id) + " AND (ip_address LIKE '%" + query + "%' OR username LIKE '%" + query + "%') ORDER BY timestamp DESC"
+            cursor.execute(sql)
+            rows = cursor.fetchall()
+            entries = [
+                {'id': r[0], 'timestamp': r[1], 'ip_address': r[2], 'username': r[3], 'success': r[4]}
+                for r in rows
+            ]
 
         # FIX: use the Django ORM with parameterized filtering instead of
         # raw SQL. The ORM always escapes/parameterizes values, so user
         # input can never alter the structure of the query.
-        entries = LogEntry.objects.filter(server=server).filter(
-            models.Q(ip_address__icontains=query) | models.Q(username__icontains=query)
-        ).order_by('-timestamp')
+        # entries = LogEntry.objects.filter(server=server).filter(
+        #     models.Q(ip_address__icontains=query) | models.Q(username__icontains=query)
+        # ).order_by('-timestamp')
     else:
         entries = LogEntry.objects.filter(server=server).order_by('-timestamp')
 
