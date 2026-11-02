@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+<head><title>Sentinel - Access Log</title></head>
+<body>
+    <h1>Your access log</h1>
+    <p><a href="{% url 'dashboard' %}">&larr; Back to dashboard</a></p>
+    <table border="1">
+        <tr><th>Timestamp</th><th>Action</th><th>Detail</th><th>IP</th></tr>
+        {% for log in logs %}
+        <tr>
+            <td>{{ log.timestamp }}</td>
+            <td>{{ log.action }}</td>
+            <td>{{ log.detail }}</td>
+            <td>{{ log.ip_address }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+</body>
+</html>

@@ -170,9 +170,11 @@ class MonitorServerLogicTest(TestCase):
         self.assertEqual(LogEntry.objects.count(), 3)
 
     def test_blocks_ip_after_threshold_reached_in_realtime(self):
-        line_template = 'Oct 26 16:43:{:02d} MSI sshd[1234]: Failed password for ruben from 9.9.9.9 port 50000 ssh2\n'
+        base_time = timezone.now()
         for i in range(5):
-            self.cmd.process_line(line_template.format(i), self.server)
+            ts = base_time + timedelta(seconds=i)
+            line = ts.strftime('%b %d %H:%M:%S') + ' MSI sshd[1234]: Failed password for ruben from 9.9.9.9 port 50000 ssh2\n'
+            self.cmd.process_line(line, self.server)
 
         self.assertTrue(
             BlockedIP.objects.filter(server=self.server, ip_address='9.9.9.9').exists()
