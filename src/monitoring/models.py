@@ -12,24 +12,35 @@ class MonitoredServer(models.Model):
     # FLAW 5 (Cryptographic Failures): SSH credentials stored as plain
     # text. Anyone with database read access (a compromised backup, an
     # SQL injection, a careless admin) could read them directly.
-    # ssh_credentials = models.CharField(max_length=255, blank=True)
-
-    # FIX: store credentials encrypted at rest using Fernet symmetric
-    # encryption. The plaintext is never written to the database.
-    ssh_credentials_encrypted = models.CharField(max_length=500, blank=True)
+    #
+    # Note: the field is called "ssh_credentials" in BOTH the flaw and
+    # the fix state on purpose, so toggling between them never requires
+    # a new migration - only the code inside these two methods changes.
+    ssh_credentials = models.CharField(max_length=500, blank=True)
 
     def set_ssh_credentials(self, plaintext):
         if not plaintext:
-            self.ssh_credentials_encrypted = ''
+            self.ssh_credentials = ''
             return
+
+        # FLAW: store the plaintext as-is.
+        # self.ssh_credentials = plaintext
+
+        # FIX: encrypt with Fernet symmetric encryption before storing.
+        # The plaintext itself is never written to the database.
         f = Fernet(settings.ENCRYPTION_KEY)
-        self.ssh_credentials_encrypted = f.encrypt(plaintext.encode()).decode()
+        self.ssh_credentials = f.encrypt(plaintext.encode()).decode()
 
     def get_ssh_credentials(self):
-        if not self.ssh_credentials_encrypted:
+        if not self.ssh_credentials:
             return ''
+
+        # FLAW: the stored value already is the plaintext.
+        # return self.ssh_credentials
+
+        # FIX: decrypt before returning.
         f = Fernet(settings.ENCRYPTION_KEY)
-        return f.decrypt(self.ssh_credentials_encrypted.encode()).decode()
+        return f.decrypt(self.ssh_credentials.encode()).decode()
 
     def __str__(self):
         return self.name
