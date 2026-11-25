@@ -1,7 +1,7 @@
 import tempfile
 import os
 
-from django.test import TestCase
+from django.test import TestCase, Client
 from django.contrib.auth.models import User
 from django.core.management import call_command
 from .models import MonitoredServer, LogEntry
@@ -179,3 +179,38 @@ class MonitorServerLogicTest(TestCase):
         self.assertTrue(
             BlockedIP.objects.filter(server=self.server, ip_address='9.9.9.9').exists()
         )
+
+class LoginLockoutTest(TestCase):
+    """
+    Regression test for FLAW 3 (Authentication Failures): a peer
+    reviewer found that the old implementation stored the failed
+    attempt counter in request.session, so an attacker who simply
+    did not send the session cookie reset their own counter to zero
+    on every request and was never locked out. The fix moves the
+    counter server-side (the LoginAttempt model, keyed by IP), so it
+    can't be bypassed that way.
+    """
+
+    def setUp(self):
+        self.user = User.objects.create_user(username='victim', password='correct-password')
+
+    def test_attacker_without_session_cookie_still_gets_locked_out(self):
+        client = Client(enforce_csrf_checks=False)
+
+        for _ in range(5):
+            # A fresh Client() with no cookies on every single request
+            # simulates an attacker who never sends a session cookie
+            # back - exactly the bypass the reviewer described.
+            fresh_client = Client(enforce_csrf_checks=False)
+            fresh_client.post('/login/', {'username': 'victim', 'password': 'wrong'})
+
+        response = client.post('/login/', {'username': 'victim', 'password': 'wrong'})
+        self.assertContains(response, 'Too many failed attempts')
+
+    def test_legitimate_user_is_not_blocked_before_the_threshold(self):
+        client = Client(enforce_csrf_checks=False)
+        for _ in range(4):
+            client.post('/login/', {'username': 'victim', 'password': 'wrong'})
+
+        response = client.post('/login/', {'username': 'victim', 'password': 'correct-password'})
+        self.assertEqual(response.status_code, 302)

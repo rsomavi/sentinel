@@ -78,3 +78,17 @@ class AccessLog(models.Model):
 
     def __str__(self):
         return f'{self.timestamp} {self.user} {self.action} {self.detail}'
+
+
+class LoginAttempt(models.Model):
+    # FIX for FLAW 3 (Authentication Failures): failed login attempts
+    # are tracked here, server-side, keyed by IP address - not in
+    # request.session, which lives in a cookie the attacker controls
+    # (an attacker who simply omits the session cookie would otherwise
+    # reset their own counter back to zero on every try).
+    ip_address = models.GenericIPAddressField()
+    username = models.CharField(max_length=150, blank=True)
+    timestamp = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f'{self.timestamp} failed login for {self.username!r} from {self.ip_address}'

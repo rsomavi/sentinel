@@ -2,10 +2,12 @@ from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
 from django.shortcuts import render, redirect, get_object_or_404
 from django.db import connection, models
-from .models import MonitoredServer, LogEntry, BlockedIP, AccessLog
+from django.utils import timezone
+from .models import MonitoredServer, LogEntry, BlockedIP, AccessLog, LoginAttempt
 
 
 import time
+from datetime import timedelta
 
 LOGIN_ATTEMPTS_THRESHOLD = 5
 LOGIN_LOCKOUT_SECONDS = 60
@@ -27,14 +29,32 @@ def login_view(request):
     #     return render(request, 'monitoring/login.html', {'error': 'Invalid credentials'})
     # return render(request, 'monitoring/login.html')
 
-    # FIX: track failed attempts in the session and lock out the user
-    # temporarily after too many consecutive failures, mitigating
-    # brute-force attacks against the login form.
-    locked_until = request.session.get('login_locked_until')
-    if locked_until and time.time() < locked_until:
-        remaining = int(locked_until - time.time())
+    # FIX: count failed attempts server-side, in the LoginAttempt table,
+    # keyed by IP address - NOT in request.session. A counter kept in
+    # the session lives in a cookie the attacker controls: an attacker
+    # who simply stops sending that cookie would reset their own count
+    # back to zero on every single try, making the old session-based
+    # lockout trivial to bypass. Counting in the database closes that
+    # gap, since the server decides what counts as "recent", not the
+    # client.
+    ip = get_client_ip(request)
+    window_start = timezone.now() - timedelta(seconds=LOGIN_LOCKOUT_SECONDS)
+    recent_failures = LoginAttempt.objects.filter(
+        ip_address=ip, timestamp__gte=window_start
+    ).count()
+
+    if recent_failures >= LOGIN_ATTEMPTS_THRESHOLD:
+        # FIX for FLAW 4 (Security Logging and Monitoring Failures):
+        # a blocked attempt is itself worth recording, since it is
+        # the clearest sign that someone is actively being locked out.
+        AccessLog.objects.create(
+            user=None,
+            action='login_blocked',
+            detail=f'ip={ip}',
+            ip_address=ip,
+        )
         return render(request, 'monitoring/login.html', {
-            'error': f'Too many failed attempts. Try again in {remaining} seconds.'
+            'error': f'Too many failed attempts. Try again in {LOGIN_LOCKOUT_SECONDS} seconds.'
         })
 
     if request.method == 'POST':
@@ -43,7 +63,6 @@ def login_view(request):
         user = authenticate(request, username=username, password=password)
 
         if user is not None:
-            request.session['login_attempts'] = 0
             login(request, user)
 
             # FLAW 4 (Security Logging Failures): successful logins are
@@ -55,25 +74,29 @@ def login_view(request):
             AccessLog.objects.create(
                 user=user,
                 action='login',
-                ip_address=get_client_ip(request),
+                ip_address=ip,
             )
 
             return redirect('dashboard')
 
-        attempts = request.session.get('login_attempts', 0) + 1
-        request.session['login_attempts'] = attempts
+        # FIX for FLAW 3: record this failure in the database so it
+        # counts against this IP's limit even without a session cookie.
+        LoginAttempt.objects.create(ip_address=ip, username=username or '')
 
-        if attempts >= LOGIN_ATTEMPTS_THRESHOLD:
-            request.session['login_locked_until'] = time.time() + LOGIN_LOCKOUT_SECONDS
-            request.session['login_attempts'] = 0
-            return render(request, 'monitoring/login.html', {
-                'error': f'Too many failed attempts. Try again in {LOGIN_LOCKOUT_SECONDS} seconds.'
-            })
+        # FIX for FLAW 4: failed attempts are exactly the event that
+        # matters most for brute-force detection, so they get logged
+        # too, not just the eventual lockout or a successful login.
+        AccessLog.objects.create(
+            user=None,
+            action='login_failed',
+            detail=f'username={username}',
+            ip_address=ip,
+        )
 
         return render(request, 'monitoring/login.html', {'error': 'Invalid credentials'})
 
     return render(request, 'monitoring/login.html')
-    
+
 
 
 def logout_view(request):
